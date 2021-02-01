@@ -500,7 +500,12 @@ def format_numeric_column(dataframe, column_name, TYPE):
 
                 from numpy import round, log10
 
-                i = int(TYPE.strip('SF')) - 1 - int(log10(abs(value)))
+                # Avoid log(0) as int(log(0)) will raise an OverflowError
+                if value != 0:
+                    i = int(TYPE.strip('SF')) - 1 - int(log10(abs(value)))
+
+                else:
+                    return f"{value}"
 
                 if i < 0:
                     return f"{round(value, i):.0f}"
@@ -618,6 +623,7 @@ def check_file(input_file, output_file=None, standard_AGS4_dictionary=None):
     ags_errors = check.rule_10a(tables, headings, dictionary, ags_errors=ags_errors)
     ags_errors = check.rule_10b(tables, headings, dictionary, ags_errors=ags_errors)
     ags_errors = check.rule_10c(tables, headings, dictionary, ags_errors=ags_errors)
+    ags_errors = check.rule_11(tables, headings, dictionary, ags_errors=ags_errors)
     ags_errors = check.rule_16(tables, headings, dictionary, ags_errors=ags_errors)
     ags_errors = check.rule_17(tables, headings, dictionary, ags_errors=ags_errors)
     # Note: rule_18() has to be called after rule_9() as it relies on rule_9() to flag non-standard headings.
