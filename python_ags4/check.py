@@ -248,6 +248,8 @@ def rule_5(line, line_number=0, ags_errors={}):
     '''AGS4 Rule 5: All fields should be enclosed in double quotes.
     '''
 
+    import re
+
     if not line.isspace():
         if not line.startswith('"') or not line.strip('\r\n').endswith('"'):
             add_error_msg(ags_errors, 'Rule 5', line_number, '', 'Contains fields that are not enclosed in double quotes.')
@@ -262,6 +264,19 @@ def rule_5(line, line_number=0, ags_errors={}):
             # present in fields with string data (i.e TYPE="X"). However, fields in DATA
             # rows that are not enclosed in double quotes will be caught by rule_4b() as
             # they will not be of the same length as the headings row after splitting by '","'.
+
+        else:
+            # Verify that quotes within data fields are enclosed by a second double quote
+
+            # Remove quotes enclosing data fields
+            temp = re.sub(r'","', ' ', line.strip('\r\n')).strip(r'"')
+            # Remove correct double-double quotes
+            temp = re.sub(r'""', ' ', temp)
+
+            # Find orphan double quotes
+            if '"' in re.findall(r'"', temp):
+                msg = 'Contains quotes within a data field. All such quotes should be enclosed by a second quote.'
+                add_error_msg(ags_errors, 'Rule 5', line_number, '', msg)
 
     elif (line == '\r\n') or (line == '\n'):
         pass
@@ -301,14 +316,21 @@ def rule_19a(line, line_number=0, group='', ags_errors={}):
     '''AGS4 Rule 19a: HEADING names should consist of uppercase letters.
     '''
 
+    import re
+
     if line.strip('"').startswith('HEADING'):
         temp = line.rstrip().split('","')
         temp = [item.strip('"') for item in temp]
 
         if len(temp) >= 2:
             for item in temp[1:]:
-                if not item.isupper() or (len(item) > 9):
-                    add_error_msg(ags_errors, 'Rule 19a', line_number, group, f'Heading {item} should be uppercase and limited to 9 character in length.')
+                if len(re.findall(r'[^A-Z0-9_]', item)) > 0:
+                    msg = f'Heading {item} should consist of only uppercase letters, numbers, and an underscore character.'
+                    add_error_msg(ags_errors, 'Rule 19a', line_number, group, msg)
+
+                if len(item) > 9:
+                    msg = f'Heading {item} is more than 9 characters in length.'
+                    add_error_msg(ags_errors, 'Rule 19a', line_number, group, msg)
 
         else:
             add_error_msg(ags_errors, 'Rule 19a', line_number, group, 'Headings row does not seem to have any fields.')
@@ -329,7 +351,8 @@ def rule_19b(line, line_number=0, group='', ags_errors={}):
             for item in temp[1:]:
                 try:
                     if (len(item.split('_')[0]) != 4) or (len(item.split('_')[1]) > 4):
-                        add_error_msg(ags_errors, 'Rule 19b', line_number, group, f'Heading {item} should consist of a 4 charater group name and a field name of upto 4 characters.')
+                        msg = f'Heading {item} should consist of a 4 character group name and a field name of up to 4 characters.'
+                        add_error_msg(ags_errors, 'Rule 19b', line_number, group, msg)
 
                     # TODO: Check whether heading name is present in the standard AGS4 dictionary or in the DICT group in the input file
 
@@ -505,7 +528,7 @@ def rule_10c(tables, headings, dictionary, ags_errors={}):
 
     for group in tables:
         # Find parent group name
-        if group not in ['PROJ', 'TRAN', 'ABBR', 'DICT', 'UNIT', 'TYPE', 'LOCA']:
+        if group not in ['PROJ', 'TRAN', 'ABBR', 'DICT', 'UNIT', 'TYPE', 'LOCA', 'FILE']:
 
             try:
                 mask = (dictionary.DICT_TYPE == 'GROUP') & (dictionary.DICT_GRP == group)
@@ -778,7 +801,7 @@ def rule_17(tables, headings, dictionary, ags_errors={}):
             # Check whether entries in the type_list are defined in the TYPE table
             for entry in set(type_list):
                 if entry not in TYPE.loc[TYPE['HEADING'] == 'DATA', 'TYPE_TYPE'].to_list() and entry not in ['TYPE']:
-                    add_error_msg(ags_errors, 'Rule 17', '-', '-', f'Data type "{entry}" not found in TYPE table.')
+                    add_error_msg(ags_errors, 'Rule 17', '-', 'TYPE', f'Data type "{entry}" not found in TYPE table.')
 
         except KeyError:
             # TYPE_TYPE column missing. Rule 10a and 10b should catch this error
@@ -823,5 +846,71 @@ def rule_19c(tables, headings, dictionary, ags_errors={}):
             except IndexError:
                 # Heading does not have an underscore in it. Rule 19b should catch this error.
                 pass
+
+    return ags_errors
+
+
+def rule_20(tables, headings, filepath, ags_errors={}):
+    '''AGS4 Rule 20: Additional computer files included within a data submission shall be defined in a FILE GROUP.
+    '''
+
+    import os
+
+    try:
+        # Load FILE group
+        FILE = tables['FILE'].copy()
+
+        # Check whether all FILE_FSET entries in the file are defined in the FILE group
+        for group in tables:
+            # First make copy of group to avoid potential changes and side-effects
+            df = tables[group].copy()
+
+            if 'FILE_FSET' in headings[group]:
+                file_list = df.loc[(df.HEADING == 'DATA') & df.FILE_FSET.str.contains(r'[a-zA-Z0-9]', regex=True), 'FILE_FSET'].tolist()
+
+                for entry in set(file_list):
+                    if entry not in FILE.loc[FILE.HEADING == 'DATA', 'FILE_FSET'].tolist():
+                        add_error_msg(ags_errors, 'Rule 20', '-', group, f'FILE_FSET entry "{entry}" not found in FILE table.')
+
+        # Verify that a sub-directory named "FILE" exists in the same directory as the AGS4 file being checked
+        current_dir = os.path.dirname(filepath)
+
+        if not os.path.isdir(os.path.join(current_dir, 'FILE')):
+            msg = 'Folder named "FILE" not found. Files defined in the FILE table should be saved in this folder.'
+            add_error_msg(ags_errors, 'Rule 20', '-', 'FILE', msg)
+
+        # Verify entries in FILE group
+        for file_fset in set(FILE.loc[FILE.HEADING == 'DATA', 'FILE_FSET'].tolist()):
+            file_fset_path = os.path.join(current_dir, 'FILE', file_fset)
+
+            if not os.path.isdir(file_fset_path):
+                msg = f'Sub-folder named "{os.path.join("FILE", file_fset)}" not found even though it is defined in the FILE table.'
+                add_error_msg(ags_errors, 'Rule 20', '-', 'FILE', msg)
+
+            else:
+                # If sub-directory exists, then continue to check files
+                for file_name in set(FILE.loc[FILE.FILE_FSET == file_fset, 'FILE_NAME'].tolist()):
+                    file_name_path = os.path.join(current_dir, 'FILE', file_fset, file_name)
+
+                    if not os.path.isfile(file_name_path):
+                        msg = f'File named "{os.path.join("FILE", file_fset, file_name)}" not found even though it is defined in the FILE table.'
+                        add_error_msg(ags_errors, 'Rule 20', '-', 'FILE', msg)
+
+    except KeyError:
+        # FILE group not found. It is only required if FILE_FSET entries are found in other groups
+
+        for group in tables:
+            # First make copy of group to avoid potential changes and side-effects
+            df = tables[group].copy()
+
+            if 'FILE_FSET' in headings[group]:
+                file_list = df.loc[(df.HEADING == 'DATA') & df.FILE_FSET.str.contains(r'[a-zA-Z0-9]', regex=True), 'FILE_FSET'].tolist()
+
+                if len(file_list) > 0:
+                    add_error_msg(ags_errors, 'Rule 20', '-', 'FILE', 'FILE table not found even though there are FILE_FSET entries in other tables.')
+
+                    # Break out of function as soon as a group with a FILE_FSET entry is found to
+                    # avoid duplicate error entries
+                    return ags_errors
 
     return ags_errors

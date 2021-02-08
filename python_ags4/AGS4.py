@@ -530,16 +530,14 @@ def format_numeric_column(dataframe, column_name, TYPE):
     return df
 
 
-def check_file(input_file, output_file=None, standard_AGS4_dictionary=None):
+def check_file(input_file, standard_AGS4_dictionary):
     """This function checks the input AGS4 file for errors.
 
     Parameters
     ----------
     input_file : str
         Path to AGS4 file (*.ags) to be checked
-    output_file : str, optional
-        Path to file in which to save error list
-    standard_AGS4_dict : str, optional
+    standard_AGS4_dict : str
         Path to .ags file with standard AGS4 dictionary
 
     Returns
@@ -570,7 +568,7 @@ def check_file(input_file, output_file=None, standard_AGS4_dictionary=None):
                 headings = []
 
                 try:
-                    group = line.rstrip().split('","')[1]
+                    group = line.rstrip().strip('"').split('","')[1]
 
                 except IndexError:
                     # GROUP name not available (Rule 19 should catch this error)
@@ -611,6 +609,7 @@ def check_file(input_file, output_file=None, standard_AGS4_dictionary=None):
     ags_errors = check.rule_13(tables, headings, ags_errors=ags_errors)
     ags_errors = check.rule_14(tables, headings, ags_errors=ags_errors)
     ags_errors = check.rule_15(tables, headings, ags_errors=ags_errors)
+    ags_errors = check.rule_20(tables, headings, input_file, ags_errors=ags_errors)
 
     # Dictionary Based Checks
 
