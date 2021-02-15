@@ -88,7 +88,7 @@ def combine_DICT_tables(input_files):
 
         except KeyError:
             # KeyError if there is no DICT table in an input file
-            rprint(f'[yellow]  WARNING:There is no DICT table in {file}.[/yellow]')
+            rprint(f'[yellow]  WARNING: There is no DICT table in {file}.[/yellow]')
 
     # Check whether master_DICT is empty
     if master_DICT.shape[0] == 0:
@@ -152,6 +152,87 @@ def fetch_record(record_link, tables):
     except MergeError:
         # No common columns on which to perform merge operation
         return DataFrame()
+
+
+def pick_standard_dictionary(tables):
+    '''Pick standard dictionary to check file.
+
+    Parameters
+    ----------
+    tables : dict
+        Dictionary of Pandas DataFrames with all AGS4 data in file
+
+    Returns
+    -------
+    str
+      File path to standard dictionary
+    '''
+
+    import pkg_resources
+    from rich import print as rprint
+
+    # Select standard dictionary based on TRAN_AGS
+    try:
+        TRAN = tables['TRAN']
+
+        dict_version = TRAN.loc[TRAN.HEADING.eq('DATA'), 'TRAN_AGS'].values[0]
+
+        if dict_version == '4.0.3':
+            path_to_standard_dictionary = pkg_resources.resource_filename('python_ags4', 'Standard_dictionary_v4_0_3.ags')
+        elif dict_version == '4.0.4':
+            path_to_standard_dictionary = pkg_resources.resource_filename('python_ags4', 'Standard_dictionary_v4_0_4.ags')
+        elif dict_version == '4.1':
+            path_to_standard_dictionary = pkg_resources.resource_filename('python_ags4', 'Standard_dictionary_v4_1.ags')
+        else:
+            rprint('[yellow]  WARNING: Standard dictionary for AGS4 version specified in TRAN_AGS not available.[/yellow]')
+            rprint('[yellow]           Defaulting to standard dictionary v4.1.[/yellow]')
+            path_to_standard_dictionary = pkg_resources.resource_filename('python_ags4', 'Standard_dictionary_v4_1.ags')
+
+    except KeyError:
+        # TRAN table not in file
+        rprint('[yellow]  WARNING: TRAN_AGS not found. Defaulting to standard dictionary v4.1.[/yellow]')
+        path_to_standard_dictionary = pkg_resources.resource_filename('python_ags4', 'Standard_dictionary_v4_1.ags')
+
+    except IndexError:
+        # No DATA rows in TRAN table
+        rprint('[yellow]  WARNING: TRAN_AGS not found. Defaulting to standard dictionary v4.1.[/yellow]')
+        path_to_standard_dictionary = pkg_resources.resource_filename('python_ags4', 'Standard_dictionary_v4_1.ags')
+
+    return path_to_standard_dictionary
+
+
+def add_meta_data(input_file, standard_dictionary, ags_errors={}):
+    '''Add meta data from input file to error list.
+
+    Parameters
+    ----------
+    input_file : str
+        Path to input file
+    standard_dictionary : str
+        Path to standard dictionary file
+    ags_errors : dict
+        Python dictionary to store details of errors in the AGS4 file being checked.
+
+    Returns
+    -------
+    dict
+        Updated Python dictionary.
+    '''
+
+    import os
+    from python_ags4 import __version__
+    from datetime import datetime
+
+    add_error_msg(ags_errors, 'Metadata', 'File Name', '', f'{os.path.basename(input_file)}')
+    add_error_msg(ags_errors, 'Metadata', 'File Size', '', f'{int(os.path.getsize(input_file)/1024)} kB')
+    add_error_msg(ags_errors, 'Metadata', 'Checker', '', f'python_ags4 v{__version__}')
+
+    if standard_dictionary is not None:
+        add_error_msg(ags_errors, 'Metadata', 'Dictionary', '', f'{os.path.basename(standard_dictionary)}')
+
+    add_error_msg(ags_errors, 'Metadata', 'Time (UTC)', '', f'{datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")}')
+
+    return ags_errors
 
 
 # Line Rules
@@ -338,7 +419,7 @@ def rule_19a(line, line_number=0, group='', ags_errors={}):
     return ags_errors
 
 
-def rule_19b(line, line_number=0, group='', ags_errors={}):
+def rule_19b_1(line, line_number=0, group='', ags_errors={}):
     '''AGS4 Rule 19b: HEADING names shall start with the group name followed by an underscore character.
     Where a HEADING referes to an existing HEADING within another GROUP, it shall bear the same name.
     '''
@@ -528,7 +609,8 @@ def rule_10c(tables, headings, dictionary, ags_errors={}):
 
     for group in tables:
         # Find parent group name
-        if group not in ['PROJ', 'TRAN', 'ABBR', 'DICT', 'UNIT', 'TYPE', 'LOCA', 'FILE']:
+        # Groups without parents as per the Standard Dictionary are skipped
+        if group not in ['PROJ', 'TRAN', 'ABBR', 'DICT', 'UNIT', 'TYPE', 'LOCA', 'FILE', 'LBSG', 'PREM', 'STND']:
 
             try:
                 mask = (dictionary.DICT_TYPE == 'GROUP') & (dictionary.DICT_GRP == group)
@@ -827,6 +909,38 @@ def rule_18(tables, headings, ags_errors={}):
     return ags_errors
 
 
+def rule_19b_2(headings, dictionary, ags_errors={}):
+    '''AGS4 Rule 19b: HEADING names shall start with the group name followed by an underscore character.
+    Where a HEADING referes to an existing HEADING within another GROUP, it shall bear the same name.
+    '''
+
+    for group in headings:
+        # List of headings defined under other groups
+
+        for heading in [x for x in headings[group] if x != 'HEADING']:
+            ref_group_name = heading.split('_')[0]
+
+            # The standard dictionaries allow fields like 'SPEC_REF' and 'TEST_STAT' which break Rule 19b
+            # so headings starting with 'SPEC' and 'TEST' are considered exceptions to the rule
+            if ref_group_name not in [group, 'SPEC', 'TEST']:
+                ref_headings_list_1 = dictionary.loc[dictionary.HEADING.eq('DATA') & dictionary.DICT_GRP.eq(ref_group_name), 'DICT_HDNG'].tolist()
+                ref_headings_list_2 = dictionary.loc[dictionary.HEADING.eq('DATA') & dictionary.DICT_GRP.eq(group), 'DICT_HDNG'].tolist()
+
+                if not ref_headings_list_1:
+                    msg = f'Group {ref_group_name} referred to in {heading} could not be found in either the standard dictionary or the DICT table.'
+                    add_error_msg(ags_errors, 'Rule 19b', '', group, msg)
+
+                elif heading not in ref_headings_list_1 and heading in ref_headings_list_2:
+                    msg = f'Definition for {heading} not found under group {ref_group_name}. Either rename heading or add definition under correct group.'
+                    add_error_msg(ags_errors, 'Rule 19b', '', group, msg)
+
+                else:
+                    # Heading is not defined at all. This will be caught by Rule 9
+                    pass
+
+    return ags_errors
+
+
 def rule_19c(tables, headings, dictionary, ags_errors={}):
     '''AGS4 Rule 19b: HEADING names shall start with the group name followed by an underscore character.
     Where a HEADING referes to an existing HEADING within another GROUP, it shall bear the same name.
@@ -912,5 +1026,28 @@ def rule_20(tables, headings, filepath, ags_errors={}):
                     # Break out of function as soon as a group with a FILE_FSET entry is found to
                     # avoid duplicate error entries
                     return ags_errors
+
+    return ags_errors
+
+
+def is_ags3(tables, input_file, ags_errors={}):
+    '''Check if file is likely to be in AGS3 format and issue warning.
+    '''
+
+    import re
+
+    # Check whether dictionary of tables is empty
+    if not tables:
+
+        # If True, then check for AGS3 like entries
+        with open(input_file, mode='r') as f:
+            lines = f.read()
+
+            if re.findall(r'"\*\*[a-zA-Z0-9]+"', lines):
+                msg = 'No AGS4 tables found but lines starting with "**" detected. Therefore, it is possible that this file is in AGS3 format instead of AGS4.'
+                add_error_msg(ags_errors, 'General', '', '', msg)
+
+                msg = 'Checking AGS3 files is not supported. The errors listed below are valid only if this file is confirmed to be an AGS4 file.'
+                add_error_msg(ags_errors, 'General', '', '', msg)
 
     return ags_errors

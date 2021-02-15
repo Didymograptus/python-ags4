@@ -530,7 +530,7 @@ def format_numeric_column(dataframe, column_name, TYPE):
     return df
 
 
-def check_file(input_file, standard_AGS4_dictionary):
+def check_file(input_file, standard_AGS4_dictionary=None):
     """This function checks the input AGS4 file for errors.
 
     Parameters
@@ -589,7 +589,7 @@ def check_file(input_file, standard_AGS4_dictionary):
             ags_errors = check.rule_6(line, i, ags_errors=ags_errors)
             ags_errors = check.rule_19(line, i, ags_errors=ags_errors)
             ags_errors = check.rule_19a(line, i, group=group, ags_errors=ags_errors)
-            ags_errors = check.rule_19b(line, i, group=group, ags_errors=ags_errors)
+            ags_errors = check.rule_19b_1(line, i, group=group, ags_errors=ags_errors)
 
     # Import file into Pandas DataFrame to run group checks
     try:
@@ -613,6 +613,10 @@ def check_file(input_file, standard_AGS4_dictionary):
 
     # Dictionary Based Checks
 
+    # Pick standard dictionary
+    if standard_AGS4_dictionary is None:
+        standard_AGS4_dictionary = check.pick_standard_dictionary(tables)
+
     # Combine dictionary file in input file with the standard dictionary to carry out checks
     dictionary = check.combine_DICT_tables([standard_AGS4_dictionary, input_file])
 
@@ -627,6 +631,13 @@ def check_file(input_file, standard_AGS4_dictionary):
     ags_errors = check.rule_17(tables, headings, dictionary, ags_errors=ags_errors)
     # Note: rule_18() has to be called after rule_9() as it relies on rule_9() to flag non-standard headings.
     ags_errors = check.rule_18(tables, headings, ags_errors=ags_errors)
+    ags_errors = check.rule_19b_2(headings, dictionary, ags_errors=ags_errors)
     ags_errors = check.rule_19c(tables, headings, dictionary, ags_errors=ags_errors)
+
+    # Check if file is likely to in AGS3 format
+    ags_errors = check.is_ags3(tables, input_file, ags_errors=ags_errors)
+
+    # Add metadata
+    ags_errors = check.add_meta_data(input_file, standard_AGS4_dictionary, ags_errors=ags_errors)
 
     return ags_errors
