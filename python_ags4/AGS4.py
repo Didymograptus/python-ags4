@@ -1,6 +1,8 @@
-# Copyright (C) 2020  Asitha Senanayake
+# Copyright (C) 2020-2021  Asitha Senanayake
 #
-# This program is free software: you can redistribute it and/or modify
+# This file is part of python_ags4.
+#
+# python_ags4 is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
 # (at your option) any later version.
@@ -234,7 +236,16 @@ def dataframe_to_AGS4(data, headings, filepath, mode='w', index=False, encoding=
 
                 rprint(f'[green]Writing data from... [bold]{key}[/bold][green]')
                 f.write('"GROUP"'+","+'"'+key+'"'+'\r\n')
-                data[key].to_csv(f, index=index, quoting=1, columns=columns, line_terminator='\r\n', encoding=encoding)
+                data[key].apply(lambda x: x.str.replace('""', '"')).to_csv(f, index=index, quoting=1, columns=columns, line_terminator='\r\n', encoding=encoding)
+                # The lambda funtion is applied to the dataframe to take care of
+                # an edge case where quoted text is present in a field. The
+                # to_csv function automatiically adds an extra pair of quotes
+                # around any quoted strings that is encountered and there is not
+                # way work around for it as of Pandas v1.1.5. Therefore,
+                # double-double quotes required by AGS4 Rule 5 are changed to
+                # single-double quotes before the to_csv function is called.
+                # This ensures that the output file has the quoted string in
+                # double-double quotes.
                 f.write("\r\n")
 
             except KeyError:
@@ -247,7 +258,7 @@ def dataframe_to_AGS4(data, headings, filepath, mode='w', index=False, encoding=
                     rprint("[italic yellow]           Please check column order and ensure AGS4 Rule 7 is still satisfied.[/italic yellow]")
 
                 f.write('"GROUP"'+","+'"'+key+'"'+'\r\n')
-                data[key].to_csv(f, index=index, quoting=1, line_terminator='\r\n', encoding=encoding)
+                data[key].apply(lambda x: x.str.replace('""', '"')).to_csv(f, index=index, quoting=1, line_terminator='\r\n', encoding=encoding)
                 f.write("\r\n")
 
 
